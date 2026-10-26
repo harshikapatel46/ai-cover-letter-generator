@@ -58,3 +58,4 @@ Activity mode: Static build verification and API validation only.
 - Added request validation, bounded input sizes, controlled provider errors,
   client/server generation timeouts, and generated three-paragraph validation.
 - Added setup documentation and a secret-free `.env.example`.
+- Fixed three-paragraph formatting and normalization in `app/api/generate/route.ts` to gracefully strip metadata headers and preserve exact three-paragraph structure without false-positive 502 validation rejections.
