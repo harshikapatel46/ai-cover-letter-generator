@@ -41,5 +41,9 @@ The Gemini API key is read only by the server route at
 
 ## Current proof-of-concept flow
 
-Paste a resume and job description, optionally provide a company and tone,
-generate the letter, edit it if needed, then copy or download the result.
+Paste a resume or upload a `.txt`/`.md` resume file, then add the job
+description and optionally provide a company and tone. Generate the letter,
+edit it if needed, then copy or download the result.
+
+Resume files are read in the browser and are never uploaded as files to the
+server. Only the extracted text is sent to the server-side generation route.
