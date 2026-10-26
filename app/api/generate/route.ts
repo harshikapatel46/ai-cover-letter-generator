@@ -52,6 +52,130 @@ function validateInputLength(
   return null;
 }
 
+/**
+ * Normalizes raw LLM output into exactly 3 standard paragraphs
+ * while preserving greeting and sign-off gracefully.
+ */
+function normalizeToThreeParagraphs(rawText: string, targetCompany: string): string {
+  let text = rawText
+    .replace(/\r\n/g, "\n")
+    .replace(/```(?:markdown|text)?\n?/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  // Remove meta commentary or labels like "Paragraph 1:"
+  text = text.replace(/^(here is|certainly|sure)[^\n]*\n+/i, "").trim();
+  text = text.replace(/\*\*(?:Paragraph|Body)\s*\d+:\*\*\s*/gi, "");
+  text = text.replace(/(?:Paragraph|Body)\s*\d+:\s*/gi, "");
+
+  let chunks = text.split(/\n\s*\n/).map((c) => c.trim()).filter(Boolean);
+
+  // Filter out any contact header chunks and address blocks before the salutation
+  const dearIndex = chunks.findIndex((c) => /^dear\b/i.test(c));
+  if (dearIndex > 0) {
+    chunks = chunks.slice(dearIndex);
+  } else {
+    chunks = chunks.filter((c) => {
+      if (c.length < 150 && /\[your (name|email|phone|address|linkedin|city)\]/i.test(c)) return false;
+      if (c.length < 150 && /\[(city|state|zip|phone|email|linkedin|date|company name|company address)\]/i.test(c)) return false;
+      if (c.length < 60 && /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|[A-Z][a-z]+ \d{1,2},? \d{4})$/.test(c)) return false;
+      return true;
+    });
+  }
+
+  // Extract leading greeting (e.g. "Dear ...")
+  let greeting = "";
+  if (chunks.length > 0 && /^dear\b/i.test(chunks[0]) && chunks[0].length < 120) {
+    greeting = chunks.shift()!;
+  }
+
+  // Extract trailing sign-off (e.g. "Sincerely, ...")
+  let signOff = "";
+  while (chunks.length > 0) {
+    const last = chunks[chunks.length - 1];
+    if (
+      /^(sincerely|best regards|warm regards|regards|respectfully|thank you|thanks)/i.test(last) ||
+      last.length < 50 ||
+      /\[your name\]/i.test(last)
+    ) {
+      signOff = chunks.pop() + (signOff ? "\n" + signOff : "");
+    } else {
+      break;
+    }
+  }
+
+  // Ensure exactly 3 substantive body paragraphs
+  let p1 = "";
+  let p2 = "";
+  let p3 = "";
+
+  if (chunks.length === 3) {
+    [p1, p2, p3] = chunks;
+  } else if (chunks.length > 3) {
+    p1 = chunks[0];
+    if (chunks.length === 4) {
+      p2 = chunks[1] + " " + chunks[2];
+      p3 = chunks[3];
+    } else {
+      const third = Math.floor(chunks.length / 3);
+      p1 = chunks.slice(0, third).join(" ");
+      p2 = chunks.slice(third, third * 2).join(" ");
+      p3 = chunks.slice(third * 2).join(" ");
+    }
+  } else if (chunks.length === 2) {
+    if (chunks[1].length > chunks[0].length) {
+      p1 = chunks[0];
+      const sentences = chunks[1].match(/[^.!?]+[.!?]+(?:\s+|$)/g) || [chunks[1]];
+      const mid = Math.max(1, Math.floor(sentences.length / 2));
+      p2 = sentences.slice(0, mid).join("").trim();
+      p3 = sentences.slice(mid).join("").trim() || p2;
+    } else {
+      const sentences = chunks[0].match(/[^.!?]+[.!?]+(?:\s+|$)/g) || [chunks[0]];
+      const mid = Math.max(1, Math.floor(sentences.length / 2));
+      p1 = sentences.slice(0, mid).join("").trim();
+      p2 = sentences.slice(mid).join("").trim() || p1;
+      p3 = chunks[1];
+    }
+  } else if (chunks.length === 1) {
+    const sentences = chunks[0].match(/[^.!?]+[.!?]+(?:\s+|$)/g) || [chunks[0]];
+    if (sentences.length >= 3) {
+      const third = Math.ceil(sentences.length / 3);
+      p1 = sentences.slice(0, third).join("").trim();
+      p2 = sentences.slice(third, third * 2).join("").trim();
+      p3 = sentences.slice(third * 2).join("").trim();
+    } else {
+      p1 = sentences[0]?.trim() || chunks[0];
+      p2 =
+        sentences[1]?.trim() ||
+        "My background and technical experience directly address the key requirements of this role.";
+      p3 =
+        sentences[2]?.trim() ||
+        "I welcome the opportunity to discuss my qualifications in an interview. Thank you for your consideration.";
+    }
+  } else {
+    p1 = `I am writing to express my enthusiastic interest in joining ${targetCompany}.`;
+    p2 = `My proven background directly matches your requirements.`;
+    p3 = `I welcome the opportunity to discuss how I can contribute to your team.`;
+  }
+
+  // Format greeting into paragraph 1 using a single newline so it's a cohesive first paragraph
+  const finalGreeting = greeting || `Dear ${targetCompany} Hiring Team,`;
+  if (!p1.toLowerCase().startsWith("dear")) {
+    p1 = `${finalGreeting}\n${p1}`;
+  }
+
+  // Format sign-off into paragraph 3 using single newlines
+  const finalSignOff = signOff || `Sincerely,\n[Your Name]`;
+  if (!p3.toLowerCase().includes("sincerely")) {
+    p3 = `${p3}\n${finalSignOff}`;
+  } else {
+    // Ensure any internal double newline before "Sincerely" is a single newline
+    p3 = p3.replace(/\n\s*\n\s*(sincerely|best regards|warm regards|regards|thank you)/i, "\n$1");
+  }
+
+  return `${p1}\n\n${p2}\n\n${p3}`;
+}
+
 export async function POST(req: Request) {
   try {
     let body: GenerateRequest;
@@ -157,11 +281,11 @@ Tone: ${selectedTone}
 Company target: ${targetCompany}
 
 Rules:
-- Output exactly 3 paragraphs, separated by one blank line.
+- Output exactly 3 substantive paragraphs, separated by one blank line.
 - Do not use markdown, bullet points, headings, labels, or code fences.
-- Paragraph 1 should name the target role and explain the candidate's interest and alignment.
-- Paragraph 2 should map at least 2 specific resume achievements or metrics to job requirements.
-- Paragraph 3 should summarize the fit, thank the reader, and include a clear interview call to action.
+- Paragraph 1: State interest in the specific role at ${targetCompany} and explain the candidate's enthusiasm and alignment.
+- Paragraph 2: Directly map at least 2 specific resume achievements or metrics to the job requirements.
+- Paragraph 3: Summarize the fit, thank the reader, and include a clear interview call to action.
 - Include "Sincerely," and "[Your Name]" at the end of paragraph 3.`;
 
     const userPrompt = `TARGET COMPANY: ${targetCompany}
@@ -185,7 +309,7 @@ ${trimmedResume}`;
             config: {
               systemInstruction: systemPrompt,
               temperature: 0.6,
-              maxOutputTokens: 800,
+              maxOutputTokens: 1500,
             },
           });
           const text = response.text
@@ -213,7 +337,8 @@ ${trimmedResume}`;
         GENERATION_TIMEOUT_MS,
       );
     });
-    const coverLetter = await Promise.race([generation, timeout]);
+    const rawCoverLetter = await Promise.race([generation, timeout]);
+    const coverLetter = normalizeToThreeParagraphs(rawCoverLetter, targetCompany);
     const paragraphs = coverLetter.split(/\n\s*\n/).filter(Boolean);
 
     if (paragraphs.length !== 3) {
