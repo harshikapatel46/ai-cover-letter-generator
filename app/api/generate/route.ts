@@ -5,8 +5,17 @@ const MIN_INPUT_LENGTH = 40;
 const MAX_RESUME_LENGTH = 12_000;
 const MAX_JOB_DESCRIPTION_LENGTH = 20_000;
 const MAX_COMPANY_NAME_LENGTH = 120;
+const GENERATION_TIMEOUT_MS = 30_000;
 const SUPPORTED_TONES = ["Professional", "Modern", "Executive"] as const;
 const apiKey = process.env.GEMINI_API_KEY?.trim();
+const modelCandidates = Array.from(
+  new Set([
+    process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+  ]),
+);
 
 type GenerateRequest = {
   resume?: unknown;
@@ -15,7 +24,9 @@ type GenerateRequest = {
   tone?: unknown;
 };
 
-function isSupportedTone(value: unknown): value is (typeof SUPPORTED_TONES)[number] {
+function isSupportedTone(
+  value: unknown,
+): value is (typeof SUPPORTED_TONES)[number] {
   return (
     typeof value === "string" &&
     SUPPORTED_TONES.includes(value as (typeof SUPPORTED_TONES)[number])
@@ -24,6 +35,21 @@ function isSupportedTone(value: unknown): value is (typeof SUPPORTED_TONES)[numb
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown generation error";
+}
+
+function validateInputLength(
+  value: string,
+  label: string,
+  minimum: number,
+  maximum: number,
+) {
+  if (value.length < minimum) {
+    return `${label} must be at least ${minimum} characters.`;
+  }
+  if (value.length > maximum) {
+    return `${label} must be ${maximum} characters or fewer.`;
+  }
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -54,11 +80,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (
-      !jobDescription ||
-      typeof jobDescription !== "string" ||
-      !jobDescription.trim()
-    ) {
+    if (typeof jobDescription !== "string" || !jobDescription.trim()) {
       return NextResponse.json(
         { error: "Job description is required." },
         { status: 400 },
@@ -67,37 +89,24 @@ export async function POST(req: Request) {
 
     const trimmedResume = resume.trim();
     const trimmedJobDescription = jobDescription.trim();
-
-    if (trimmedResume.length < MIN_INPUT_LENGTH) {
-      return NextResponse.json(
-        { error: `Resume text must be at least ${MIN_INPUT_LENGTH} characters.` },
-        { status: 400 },
-      );
+    const resumeLengthError = validateInputLength(
+      trimmedResume,
+      "Resume text",
+      MIN_INPUT_LENGTH,
+      MAX_RESUME_LENGTH,
+    );
+    if (resumeLengthError) {
+      return NextResponse.json({ error: resumeLengthError }, { status: 400 });
     }
 
-    if (trimmedJobDescription.length < MIN_INPUT_LENGTH) {
-      return NextResponse.json(
-        {
-          error: `Job description must be at least ${MIN_INPUT_LENGTH} characters.`,
-        },
-        { status: 400 },
-      );
-    }
-
-    if (trimmedResume.length > MAX_RESUME_LENGTH) {
-      return NextResponse.json(
-        { error: `Resume text must be ${MAX_RESUME_LENGTH} characters or fewer.` },
-        { status: 400 },
-      );
-    }
-
-    if (trimmedJobDescription.length > MAX_JOB_DESCRIPTION_LENGTH) {
-      return NextResponse.json(
-        {
-          error: `Job description must be ${MAX_JOB_DESCRIPTION_LENGTH} characters or fewer.`,
-        },
-        { status: 400 },
-      );
+    const jobLengthError = validateInputLength(
+      trimmedJobDescription,
+      "Job description",
+      MIN_INPUT_LENGTH,
+      MAX_JOB_DESCRIPTION_LENGTH,
+    );
+    if (jobLengthError) {
+      return NextResponse.json({ error: jobLengthError }, { status: 400 });
     }
 
     if (companyName !== undefined && typeof companyName !== "string") {
@@ -142,22 +151,21 @@ export async function POST(req: Request) {
         ? companyName.trim()
         : "the hiring team";
 
-    const systemPrompt = `You are an elite career coach and executive resume writer. 
-Generate a compelling, concise, and tailored 3-paragraph cover letter based strictly on the candidate's resume and target job description.
+    const systemPrompt = `You are a professional cover letter writer. Generate a concise, tailored cover letter based strictly on the candidate's resume and target job description.
 
 Tone: ${selectedTone}
-Company Target: ${targetCompany}
+Company target: ${targetCompany}
 
-Guidelines:
-- Output ONLY the cover letter body as exactly 3 paragraphs.
-- Separate the 3 paragraphs with one completely blank line (two newline characters).
-- Do not put the entire letter on one line, and do not use bullet points, headings, labels, or markdown.
-- Paragraph 1: An engaging hook stating interest in the specific role at ${targetCompany}, conveying genuine enthusiasm and immediate alignment with their mission or needs.
-- Paragraph 2: Direct evidence of value. Map at least 2 specific achievements or metrics from the resume directly to core requirements stated in the job description.
-- Paragraph 3: A confident, professional closing summarizing mutual fit, thanking the reader, and including a clear call to action for an interview.`;
+Rules:
+- Output exactly 3 paragraphs, separated by one blank line.
+- Do not use markdown, bullet points, headings, labels, or code fences.
+- Paragraph 1 should name the target role and explain the candidate's interest and alignment.
+- Paragraph 2 should map at least 2 specific resume achievements or metrics to job requirements.
+- Paragraph 3 should summarize the fit, thank the reader, and include a clear interview call to action.
+- Include "Sincerely," and "[Your Name]" at the end of paragraph 3.`;
 
     const userPrompt = `TARGET COMPANY: ${targetCompany}
-TONE: ${selectedTone}
+TARGET TONE: ${selectedTone}
 
 JOB DESCRIPTION:
 ${trimmedJobDescription}
@@ -166,33 +174,48 @@ CANDIDATE RESUME / EXPERIENCE:
 ${trimmedResume}`;
 
     const googleGenAI = new GoogleGenAI({ apiKey });
-    const generation = googleGenAI.models.generateContent({
-        model: process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash",
-        contents: userPrompt,
-        config: {
-          systemInstruction: systemPrompt,
-          temperature: 0.5,
-          maxOutputTokens: 600,
-        },
-      });
+    const generation = (async () => {
+      let lastError: unknown;
+
+      for (const model of modelCandidates) {
+        try {
+          const response = await googleGenAI.models.generateContent({
+            model,
+            contents: userPrompt,
+            config: {
+              systemInstruction: systemPrompt,
+              temperature: 0.6,
+              maxOutputTokens: 800,
+            },
+          });
+          const text = response.text
+            ?.replace(/\r\n/g, "\n")
+            .replace(/```(?:markdown|text)?\n?/gi, "")
+            .trim();
+
+          if (text) {
+            return text;
+          }
+        } catch (error: unknown) {
+          lastError = error;
+          console.warn(`Gemini model ${model} failed; trying the next model.`);
+        }
+      }
+
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("All configured Gemini models failed.");
+    })();
+
     const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("GENERATION_TIMEOUT")), 30_000);
-    });
-    const response = await Promise.race([generation, timeout]);
-
-    const coverLetter = response.text
-      ?.replace(/\r\n/g, "\n")
-      .replace(/[ \t]+\n/g, "\n")
-      .trim();
-
-    if (!coverLetter) {
-      return NextResponse.json(
-        { error: "LLM returned an empty response. Please try again." },
-        { status: 500 },
+      setTimeout(
+        () => reject(new Error("GENERATION_TIMEOUT")),
+        GENERATION_TIMEOUT_MS,
       );
-    }
-
+    });
+    const coverLetter = await Promise.race([generation, timeout]);
     const paragraphs = coverLetter.split(/\n\s*\n/).filter(Boolean);
+
     if (paragraphs.length !== 3) {
       return NextResponse.json(
         {
@@ -204,10 +227,10 @@ ${trimmedResume}`;
     }
 
     return NextResponse.json({ coverLetter });
-  } catch (err: unknown) {
-    console.error("Cover letter generation error:", err);
+  } catch (error: unknown) {
+    console.error("Cover letter generation error:", error);
+    const errorMessage = getErrorMessage(error);
 
-    const errorMessage = getErrorMessage(err);
     if (errorMessage === "GENERATION_TIMEOUT") {
       return NextResponse.json(
         { error: "Generation timed out. Please try again." },
