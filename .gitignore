@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+devpost/learner-profile.md
+node_modules/
+.next/
+
+.env.local
