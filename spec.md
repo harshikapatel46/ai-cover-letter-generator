@@ -10,7 +10,7 @@
 ## File Structure
 
 - app/api/generate/route.ts: API route handling LLM generation
-- app/page.tsx: Client-side UI form and editor
+- app/page.tsx: Client-side UI form, resume file upload (.txt, .md), and editor
 - .env.local: `GEMINI_API_KEY` and optional `GEMINI_MODEL` configuration
 - .env.example: Secret-free environment variable template
 - README.md: Local setup and verification instructions

@@ -7,7 +7,7 @@ Job seekers who want tailored job applications without tedious manual writing.
 ## User Journey
 
 1. User lands on the single-page interface.
-2. User enters resume text and job description.
+2. User enters resume text (via direct paste or uploading a .txt/.md file) and job description.
 3. User selects tone and optional company name.
 4. User clicks "Generate Cover Letter".
 5. Output generates into an editable textarea.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Copy,
   Check,
@@ -13,6 +13,7 @@ import {
   Briefcase,
   FileText,
   RotateCcw,
+  Upload,
 } from "lucide-react";
 
 const MIN_INPUT_LENGTH = 40;
@@ -29,6 +30,73 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const processFile = (file: File) => {
+    const isTextFile =
+      file.name.endsWith(".txt") ||
+      file.name.endsWith(".md") ||
+      file.type === "text/plain" ||
+      file.type === "text/markdown";
+
+    if (!isTextFile) {
+      setErrorMessage(
+        "Only plain-text files (.txt, .md) are supported in this proof of concept. Please upload a .txt/.md file or paste your resume text.",
+      );
+      return;
+    }
+
+    if (file.size > 1_000_000) {
+      setErrorMessage("File is too large. Please select a text file under 1MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result;
+      if (typeof text === "string") {
+        const trimmed = text.slice(0, MAX_RESUME_LENGTH);
+        setResume(trimmed);
+        setUploadedFileName(file.name);
+        setErrorMessage(null);
+      }
+    };
+    reader.onerror = () => {
+      setErrorMessage(
+        "Failed to read the file. Please paste your resume text directly.",
+      );
+    };
+    reader.readAsText(file);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+    e.target.value = "";
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
 
   const handleGenerate = async () => {
     setErrorMessage(null);
@@ -191,6 +259,10 @@ Requirements:
     setResume("");
     setOutput("");
     setErrorMessage(null);
+    setUploadedFileName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const wordCount = output.trim() ? output.trim().split(/\s+/).length : 0;
@@ -328,9 +400,16 @@ Requirements:
               />
             </div>
 
-            {/* Resume Textarea */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
+            {/* Resume Textarea with Upload & Drag-and-Drop */}
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              className={`rounded-xl transition p-1 ${
+                isDragging ? "ring-2 ring-blue-500 bg-blue-50/50" : ""
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
                 <label
                   htmlFor="resume-input"
                   className="block text-xs font-semibold text-slate-700"
@@ -338,16 +417,57 @@ Requirements:
                   Your Resume / Achievements{" "}
                   <span className="text-red-500">*</span>
                 </label>
-                <span className="text-[11px] text-slate-400">
-                {resume.length}/{MAX_RESUME_LENGTH} characters
-                </span>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt,.md,text/plain,text/markdown"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="resume-file-input"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Upload Resume (.txt, .md)</span>
+                  </button>
+
+                  <span className="text-[11px] text-slate-400">
+                    {resume.length}/{MAX_RESUME_LENGTH} characters
+                  </span>
+                </div>
               </div>
+
+              {uploadedFileName && (
+                <div className="mb-2 flex items-center justify-between px-3 py-1.5 text-xs bg-blue-50 border border-blue-200 text-blue-800 rounded-lg">
+                  <span className="inline-flex items-center gap-1.5 truncate max-w-xs">
+                    <FileText className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Loaded: {uploadedFileName}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setUploadedFileName(null)}
+                    className="text-blue-600 hover:text-blue-900 ml-2"
+                    title="Dismiss uploaded file tag"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
               <textarea
                 id="resume-input"
                 rows={7}
-                placeholder="Paste your past roles, bullet points with measurable impact, and core skills..."
+                placeholder="Paste your past roles, bullet points with measurable impact, or drop a .txt / .md resume file here..."
                 value={resume}
-                onChange={(e) => setResume(e.target.value)}
+                onChange={(e) => {
+                  setResume(e.target.value);
+                  if (uploadedFileName) setUploadedFileName(null);
+                }}
                 maxLength={MAX_RESUME_LENGTH}
                 className="w-full p-3 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition resize-y"
               />

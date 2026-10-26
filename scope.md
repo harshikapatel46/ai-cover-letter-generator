@@ -10,7 +10,7 @@ A lightweight web app where a user inputs their resume and a target job descript
 
 ## 3. In Scope (MVP)
 
-- Input: Paste resume text.
+- Input: Paste resume text or upload plain-text resume files (.txt, .md).
 - Input: Paste target job description & company name.
 - Tone selection: Professional, Modern/Startup, Executive.
 - AI Generation: Uses an LLM to map achievements to job requirements.
