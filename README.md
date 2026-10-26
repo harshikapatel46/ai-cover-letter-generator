@@ -17,7 +17,8 @@ name, and selected tone to generate an editable three-paragraph cover letter.
    ```
 
 2. Create `.env.local` from `.env.example` and set `GEMINI_API_KEY`.
-   `GEMINI_MODEL` is optional and defaults to `gemini-3.8-flash`.
+   `GEMINI_MODEL` is optional and defaults to `gemini-3.5-flash`, with
+   additional configured model fallbacks in the server route.
 3. Start the development server:
 
    ```bash
